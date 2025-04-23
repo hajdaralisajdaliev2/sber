@@ -1,13 +1,22 @@
 import requests
 import json
 from datetime import datetime, timedelta
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Функция для получения дивидендов через ISS API
 def parse_dividends():
     url = "https://iss.moex.com/iss/securities/SBER/dividends.json?from=2015-01-01"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    response = requests.get(url, headers=headers)
-    data = response.json()
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Ошибка при запросе дивидендов: {e}")
+        return []
 
     dividends = []
     for row in data['dividends']['data']:
@@ -18,7 +27,9 @@ def parse_dividends():
                 date = datetime.strptime(date, '%Y-%m-%d').strftime('%Y-%m-%d')
                 amount = float(amount)
                 dividends.append({'date': date, 'dividend': amount})
-            except:
+                logging.info(f"Добавлено: дата {date}, дивиденд {amount}")
+            except Exception as e:
+                logging.warning(f"Ошибка обработки строки дивидендов: {e}")
                 continue
     return dividends
 
@@ -31,12 +42,20 @@ def calculate_gaps(dividends):
 
         # Получение дневных свечей
         url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json?interval=24&from={start_date}&till={end_date}"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers)
-        data = response.json()
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        try:
+            response = requests.get(url, headers=headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Ошибка при запросе свечей для {div['date']}: {e}")
+            div['yield'] = 0
+            div['gap'] = 0
+            continue
 
         candles = data['candles']['data']
         if len(candles) < 2:
+            logging.warning(f"Недостаточно свечей для {div['date']}")
             div['yield'] = 0
             div['gap'] = 0
             continue
@@ -56,7 +75,9 @@ def calculate_gaps(dividends):
         try:
             div['yield'] = (div['dividend'] / price_pre) * 100
             div['gap'] = ((price_pre - price_post) / price_pre) * 100
-        except:
+            logging.info(f"Для {div['date']}: доходность {div['yield']}%, гэп {div['gap']}%")
+        except Exception as e:
+            logging.warning(f"Ошибка расчета гэпа для {div['date']}: {e}")
             div['yield'] = 0
             div['gap'] = 0
     return dividends
@@ -77,8 +98,12 @@ def analyze_reports(dividends):
 
 # Основная функция
 def main():
+    logging.info("Запуск парсинга данных...")
     # Парсинг дивидендов
     dividends = parse_dividends()
+    if not dividends:
+        logging.error("Не удалось получить дивиденды. Завершение.")
+        return
     
     # Расчет гэпов
     dividends = calculate_gaps(dividends)
@@ -90,7 +115,7 @@ def main():
     with open('data.json', 'w', encoding='utf-8') as f:
         json.dump(dividends, f, ensure_ascii=False, indent=2)
     
-    print("Данные сохранены в data.json")
+    logging.info("Данные сохранены в data.json")
 
 if __name__ == "__main__":
     main()
