@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Анализ дивидендов и гэпов Сбербанк</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="container mx-auto p-4">
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Анализ дивидендов и гэпов Сбербанк (SBER)</h1>
+
+        <!-- Фильтры -->
+        <div class="mb-4 flex justify-between items-center">
+            <div>
+                <label for="yearFilter" class="mr-2 text-gray-700">Фильтр по году:</label>
+                <select id="yearFilter" class="border rounded px-2 py-1">
+                    <option value="">Все годы</option>
+                </select>
+            </div>
+            <div>
+                <button id="sortByGap" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600">Сортировать по гэпу</button>
+            </div>
+        </div>
+
+        <!-- Таблица -->
+        <div class="overflow-x-auto">
+            <table id="dividendTable" class="min-w-full bg-white shadow-md rounded">
+                <thead class="bg-gray-200">
+                    <tr>
+                        <th class="py-2 px-4 border">Дата отсечки</th>
+                        <th class="py-2 px-4 border">Дивиденд (RUB)</th>
+                        <th class="py-2 px-4 border">Доходность (%)</th>
+                        <th class="py-2 px-4 border">Гэп (%)</th>
+                        <th class="py-2 px-4 border">Гэп/Дивиденд (%)</th>
+                        <th class="py-2 px-4 border">Анализ отчета</th>
+                        <th class="py-2 px-4 border">Свечи</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- График -->
+        <div id="chartContainer" class="mt-6">
+            <canvas id="priceChart"></canvas>
+        </div>
+
+        <!-- Результаты -->
+        <div id="results" class="mt-6 p-4 bg-white shadow-md rounded"></div>
+    </div>
+
+    <script>
+        // Инициализация графика
+        const ctx = document.getElementById('priceChart').getContext('2d');
+        const priceChart = new Chart(ctx, {
+            type: 'candlestick',
+            data: {
+                datasets: [{
+                    label: 'Свечи SBER (1 минута)',
+                    data: []
+                }]
+            },
+            options: {
+                scales: {
+                    x: { title: { display: true, text: 'Время' } },
+                    y: { title: { display: true, text: 'Цена (RUB)' } }
+                }
+            }
+        });
+
+        let dividendData = [];
+
+        // Загрузка данных из JSON
+        async function loadData() {
+            try {
+                const response = await fetch('data.json');
+                return await response.json();
+            } catch (error) {
+                console.error('Ошибка загрузки данных:', error);
+                return [];
+            }
+        }
+
+        // Заполнение фильтра по годам
+        function populateYearFilter(data) {
+            const years = [...new Set(data.map(item => item.date.split('-')[0]))];
+            const yearFilter = document.getElementById('yearFilter');
+            years.forEach(year => {
+                const option = document.createElement('option');
+                option.value = year;
+                option.textContent = year;
+                yearFilter.appendChild(option);
+            });
+        }
+
+        // Заполнение таблицы
+        async function populateTable(filterYear = '') {
+            dividendData = await loadData();
+            if (filterYear) {
+                dividendData = dividendData.filter(item => item.date.startsWith(filterYear));
+            }
+
+            const tbody = document.querySelector('#dividendTable tbody');
+            tbody.innerHTML = '';
+            dividendData.forEach(item => {
+                const gapToDiv = item.yield ? (item.gap / item.yield * 100) : 0;
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-100';
+                row.innerHTML = `
+                    <td class="py-2 px-4 border">${item.date}</td>
+                    <td class="py-2 px-4 border">${item.dividend.toFixed(2)}</td>
+                    <td class="py-2 px-4 border">${item.yield.toFixed(2)}</td>
+                    <td class="py-2 px-4 border">${item.gap.toFixed(2)}</td>
+                    <td class="py-2 px-4 border">${gapToDiv.toFixed(2)}</td>
+                    <td class="py-2 px-4 border">${item.report}</td>
+                    <td class="py-2 px-4 border">
+                        <button class="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600" onclick="showCandles('${item.date}')">Показать свечи</button>
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            // Средняя статистика
+            const avgGapToDiv = dividendData.reduce((sum, item) => sum + (item.yield ? item.gap / item.yield * 100 : 0), 0) / dividendData.length;
+            document.getElementById('results').innerHTML = `
+                <h3 class="text-xl font-semibold mb-2">Средняя статистика</h3>
+                <p>Средний гэп: ${avgGapToDiv.toFixed(2)}% от дивиденда</p>
+                <p>Гэп обычно ${avgGapToDiv > 100 ? 'больше' : 'меньше'} дивиденда</p>
+            `;
+        }
+
+        // Сортировка по гэпу
+        document.getElementById('sortByGap').addEventListener('click', () => {
+            dividendData.sort((a, b) => b.gap - a.gap);
+            populateTable(document.getElementById('yearFilter').value);
+        });
+
+        // Фильтр по году
+        document.getElementById('yearFilter').addEventListener('change', (e) => {
+            populateTable(e.target.value);
+        });
+
+        // Получение свечей (заглушка)
+        async function fetchCandles(date) {
+            try {
+                const response = await Promise.resolve({
+                    ok: true,
+                    json: () => ({
+                        candles: {
+                            data: [
+                                [`${date} 09:50:00`, 300.0, 301.0, 299.5, 300.5, 1000],
+                                [`${date} 09:51:00`, 300.5, 301.5, 300.0, 301.0, 1200],
+                                [`${date} 10:00:00`, 270.0, 271.0, 269.0, 270.5, 1500],
+                                [`${date} 10:01:00`, 270.5, 271.5, 270.0, 271.0, 1300]
+                            ],
+                            columns: ['begin', 'open', 'high', 'low', 'close', 'volume']
+                        }
+                    })
+                });
+                if (!response.ok) throw new Error('Ошибка API');
+                const data = await response.json();
+                return data.candles.data.map(row => ({
+                    time: row[0],
+                    open: row[1],
+                    high: row[2],
+                    low: row[3],
+                    close: row[4]
+                }));
+            } catch (error) {
+                console.error('Ошибка:', error);
+                return [];
+            }
+        }
+
+        // Отображение свечей
+        async function showCandles(date) {
+            const candles = await fetchCandles(date);
+            if (candles.length === 0) {
+                document.getElementById('results').innerHTML += '<p class="text-red-500 mt-2">Ошибка: данные свечей недоступны</p>';
+                return;
+            }
+
+            priceChart.data.datasets[0].data = candles.map(candle => ({
+                x: candle.time,
+                o: candle.open,
+                h: candle.high,
+                l: candle.low,
+                c: candle.close
+            }));
+            priceChart.update();
+
+            const item = dividendData.find(d => d.date === date);
+            const gapToDiv = item.yield ? (item.gap / item.yield * 100) : 0;
+            document.getElementById('results').innerHTML = `
+                <h3 class="text-xl font-semibold mb-2">Анализ для ${date}</h3>
+                <p>Дивиденд: ${item.dividend.toFixed(2)} RUB (${item.yield.toFixed(2)}%)</p>
+                <p>Гэп: ${item.gap.toFixed(2)}% (${gapToDiv.toFixed(2)}% от дивиденда)</p>
+                <p>Анализ отчета: ${item.report}</p>
+            `;
+        }
+
+        // Инициализация
+        loadData().then(data => {
+            dividendData = data;
+            populateYearFilter(data);
+            populateTable();
+        });
+    </script>
+</body>
+</html>
