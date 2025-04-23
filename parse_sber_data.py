@@ -8,15 +8,15 @@ from bs4 import BeautifulSoup
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Функция для получения дивидендов через ISS API
-def parse_dividends_iss():
-    url = "https://iss.moex.com/iss/securities/SBER/dividends.json?from=2015-01-01"
+def parse_dividends_iss(ticker):
+    url = f"https://iss.moex.com/iss/securities/{ticker}/dividends.json?from=2015-01-01"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при запросе дивидендов через ISS: {e}")
+        logging.error(f"Ошибка при запросе дивидендов через ISS для {ticker}: {e}")
         return []
 
     dividends = []
@@ -28,22 +28,22 @@ def parse_dividends_iss():
                 date = datetime.strptime(date, '%Y-%m-%d').strftime('%Y-%m-%d')
                 amount = float(amount)
                 dividends.append({'date': date, 'dividend': amount})
-                logging.info(f"Добавлено: дата {date}, дивиденд {amount}")
+                logging.info(f"Добавлено: дата {date}, дивиденд {amount} для {ticker}")
             except Exception as e:
-                logging.warning(f"Ошибка обработки строки дивидендов: {e}")
+                logging.warning(f"Ошибка обработки строки дивидендов для {ticker}: {e}")
                 continue
     return dividends
 
 # Резервная функция для получения дивидендов через Finam
-def parse_dividends_finam():
-    url = "https://www.finam.ru/profile/moex-akcii/sberbank/dividends/"
+def parse_dividends_finam(ticker):
+    url = f"https://www.finam.ru/profile/moex-akcii/{ticker}/dividends/"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     try:
         response = requests.get(url, headers=headers, timeout=10)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
     except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при запросе дивидендов через Finam: {e}")
+        logging.error(f"Ошибка при запросе дивидендов через Finam для {ticker}: {e}")
         return []
 
     dividends = []
@@ -59,43 +59,43 @@ def parse_dividends_finam():
                     date = datetime.strptime(date, '%d.%m.%Y').strftime('%Y-%m-%d')
                     amount = float(amount)
                     dividends.append({'date': date, 'dividend': amount})
-                    logging.info(f"Finam: Добавлено: дата {date}, дивиденд {amount}")
+                    logging.info(f"Finam: Добавлено: дата {date}, дивиденд {amount} для {ticker}")
                 except Exception as e:
-                    logging.warning(f"Ошибка обработки строки дивидендов (Finam): {e}")
+                    logging.warning(f"Ошибка обработки строки дивидендов (Finam) для {ticker}: {e}")
                     continue
     return dividends
 
 # Функция для получения дивидендов (попробует ISS, затем Finam)
-def parse_dividends():
-    dividends = parse_dividends_iss()
+def parse_dividends(ticker):
+    dividends = parse_dividends_iss(ticker)
     if dividends:
         return dividends
-    logging.warning("ISS API недоступен, пробуем Finam...")
-    return parse_dividends_finam()
+    logging.warning(f"ISS API недоступен для {ticker}, пробуем Finam...")
+    return parse_dividends_finam(ticker)
 
 # Функция для получения цен и расчета гэпа через ISS API
-def calculate_gaps(dividends):
+def calculate_gaps(ticker, dividends):
     for div in dividends:
         date = datetime.strptime(div['date'], '%Y-%m-%d')
         start_date = (date - timedelta(days=2)).strftime('%Y-%m-%d')
         end_date = (date + timedelta(days=2)).strftime('%Y-%m-%d')
 
         # Получение дневных свечей
-        url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/SBER/candles.json?interval=24&from={start_date}&till={end_date}"
+        url = f"https://iss.moex.com/iss/engines/stock/markets/shares/securities/{ticker}/candles.json?interval=24&from={start_date}&till={end_date}"
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         try:
             response = requests.get(url, headers=headers, timeout=10)
             response.raise_for_status()
             data = response.json()
         except requests.exceptions.RequestException as e:
-            logging.error(f"Ошибка при запросе свечей для {div['date']}: {e}")
+            logging.error(f"Ошибка при запросе свечей для {div['date']} ({ticker}): {e}")
             div['yield'] = 0
             div['gap'] = 0
             continue
 
         candles = data['candles']['data']
         if len(candles) < 2:
-            logging.warning(f"Недостаточно свечей для {div['date']}")
+            logging.warning(f"Недостаточно свечей для {div['date']} ({ticker})")
             div['yield'] = 0
             div['gap'] = 0
             continue
@@ -115,38 +115,50 @@ def calculate_gaps(dividends):
         try:
             div['yield'] = (div['dividend'] / price_pre) * 100
             div['gap'] = ((price_pre - price_post) / price_pre) * 100
-            logging.info(f"Для {div['date']}: доходность {div['yield']}%, гэп {div['gap']}%")
+            logging.info(f"Для {div['date']} ({ticker}): доходность {div['yield']}%, гэп {div['gap']}%")
         except Exception as e:
-            logging.warning(f"Ошибка расчета гэпа для {div['date']}: {e}")
+            logging.warning(f"Ошибка расчета гэпа для {div['date']} ({ticker}): {e}")
             div['yield'] = 0
             div['gap'] = 0
     return dividends
 
-# Функция для анализа отчетов (заглушка)
+# Функция для анализа отчетов (заглушка, можно расширить)
 def analyze_reports(dividends):
     report_data = {
-        '2024-07-11': {'profit_change': 18.0, 'status': 'Положительный'},
-        '2023-05-11': {'profit_change': 10.0, 'status': 'Положительный'},
-        '2022-05-12': {'profit_change': -20.0, 'status': 'Отрицательный'},
-        '2021-05-06': {'profit_change': 15.0, 'status': 'Положительный'},
-        '2020-06-25': {'profit_change': -10.0, 'status': 'Отрицательный'}
+        'SBER': {
+            '2024-07-11': {'profit_change': 18.0, 'status': 'Положительный'},
+            '2023-05-11': {'profit_change': 10.0, 'status': 'Положительный'},
+            '2022-05-12': {'profit_change': -20.0, 'status': 'Отрицательный'},
+            '2021-05-06': {'profit_change': 15.0, 'status': 'Положительный'},
+            '2020-06-25': {'profit_change': -10.0, 'status': 'Отрицательный'}
+        },
+        'LKOH': {
+            '2024-06-14': {'profit_change': 12.0, 'status': 'Положительный'},
+            '2023-07-07': {'profit_change': 8.0, 'status': 'Положительный'}
+        }
     }
+
     for div in dividends:
         date = div['date']
-        div['report'] = report_data.get(date, {'status': 'Неизвестно'})['status']
+        ticker = div.get('ticker', 'SBER')
+        div['report'] = report_data.get(ticker, {}).get(date, {'status': 'Неизвестно'})['status']
     return dividends
 
 # Основная функция
-def main():
-    logging.info("Запуск парсинга данных...")
+def main(ticker="SBER"):
+    logging.info(f"Запуск парсинга данных для {ticker}...")
     # Парсинг дивидендов
-    dividends = parse_dividends()
+    dividends = parse_dividends(ticker)
     if not dividends:
-        logging.error("Не удалось получить дивиденды ни через ISS, ни через Finam. Завершение.")
+        logging.error(f"Не удалось получить дивиденды ни через ISS, ни через Finam для {ticker}. Завершение.")
         return
     
+    # Добавляем тикер в данные
+    for div in dividends:
+        div['ticker'] = ticker
+    
     # Расчет гэпов
-    dividends = calculate_gaps(dividends)
+    dividends = calculate_gaps(ticker, dividends)
     
     # Анализ отчетов
     dividends = analyze_reports(dividends)
@@ -155,7 +167,10 @@ def main():
     with open('data.json', 'w', encoding='utf-8') as f:
         json.dump(dividends, f, ensure_ascii=False, indent=2)
     
-    logging.info("Данные сохранены в data.json")
+    logging.info(f"Данные для {ticker} сохранены в data.json")
 
 if __name__ == "__main__":
-    main()
+    ticker = input("Введите тикер акции (например, SBER, LKOH): ").strip().upper()
+    if not ticker:
+        ticker = "SBER"
+    main(ticker)
