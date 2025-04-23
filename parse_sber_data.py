@@ -42,6 +42,8 @@ def calculate_gaps(dividends):
             continue
 
         # Находим цены до и после отсечки
+        price_pre = None
+        price_post = None
         for i, candle in enumerate(candles):
             candle_date = candle[0].split(' ')[0]  # Дата свечи
             if candle_date < div['date']:
