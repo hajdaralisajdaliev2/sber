@@ -3,13 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Анализ дивидендов и гэпов Сбербанк</title>
+    <title>Анализ дивидендов и гэпов</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-100 font-sans">
     <div class="container mx-auto p-4">
-        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Анализ дивидендов и гэпов Сбербанк (SBER)</h1>
+        <h1 class="text-3xl font-bold text-gray-800 mb-6 text-center">Анализ дивидендов и гэпов</h1>
+
+        <!-- Поле ввода тикера -->
+        <div class="mb-4 flex justify-center items-center">
+            <div>
+                <label for="tickerInput" class="mr-2 text-gray-700">Введите тикер акции (например, SBER, LKOH):</label>
+                <input type="text" id="tickerInput" class="border rounded px-2 py-1" placeholder="SBER">
+                <button id="loadTicker" class="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 ml-2">Загрузить</button>
+            </div>
+        </div>
 
         <!-- Фильтры -->
         <div class="mb-4 flex justify-between items-center">
@@ -58,7 +67,7 @@
             type: 'candlestick',
             data: {
                 datasets: [{
-                    label: 'Свечи SBER (1 минута)',
+                    label: 'Свечи (1 минута)',
                     data: []
                 }]
             },
@@ -76,17 +85,22 @@
         async function loadData() {
             try {
                 const response = await fetch('data.json');
+                if (!response.ok) {
+                    throw new Error('Не удалось загрузить data.json');
+                }
                 return await response.json();
             } catch (error) {
                 console.error('Ошибка загрузки данных:', error);
+                document.getElementById('results').innerHTML = `<p class="text-red-500">Ошибка: ${error.message}. Убедитесь, что data.json существует и страница открыта через сервер.</p>`;
                 return [];
             }
         }
 
         // Заполнение фильтра по годам
         function populateYearFilter(data) {
-            const years = [...new Set(data.map(item => item.date.split('-')[0]))];
             const yearFilter = document.getElementById('yearFilter');
+            yearFilter.innerHTML = '<option value="">Все годы</option>'; // Очистка фильтра
+            const years = [...new Set(data.map(item => item.date.split('-')[0]))];
             years.forEach(year => {
                 const option = document.createElement('option');
                 option.value = year;
@@ -98,9 +112,17 @@
         // Заполнение таблицы
         async function populateTable(filterYear = '') {
             dividendData = await loadData();
+            if (dividendData.length === 0) {
+                document.getElementById('results').innerHTML = `<p class="text-red-500">Данные отсутствуют. Запустите parse_sber_data.py и убедитесь, что data.json создан.</p>`;
+                return;
+            }
+
             if (filterYear) {
                 dividendData = dividendData.filter(item => item.date.startsWith(filterYear));
             }
+
+            const ticker = dividendData.length > 0 ? dividendData[0].ticker : 'Неизвестно';
+            document.querySelector('h1').textContent = `Анализ дивидендов и гэпов (${ticker})`;
 
             const tbody = document.querySelector('#dividendTable tbody');
             tbody.innerHTML = '';
@@ -140,6 +162,19 @@
         // Фильтр по году
         document.getElementById('yearFilter').addEventListener('change', (e) => {
             populateTable(e.target.value);
+        });
+
+        // Загрузка данных по тикеру
+        document.getElementById('loadTicker').addEventListener('click', async () => {
+            const ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
+            if (!ticker) {
+                document.getElementById('results').innerHTML = `<p class="text-red-500">Введите тикер акции.</p>`;
+                return;
+            }
+
+            document.getElementById('results').innerHTML = `<p class="text-blue-500">Загрузка данных для ${ticker}... Запустите parse_sber_data.py с тикером ${ticker}.</p>`;
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Даем время на запуск скрипта
+            populateTable();
         });
 
         // Получение свечей (заглушка)
@@ -204,8 +239,12 @@
         // Инициализация
         loadData().then(data => {
             dividendData = data;
-            populateYearFilter(data);
-            populateTable();
+            if (data.length > 0) {
+                populateYearFilter(data);
+                populateTable();
+            } else {
+                document.getElementById('results').innerHTML = `<p class="text-red-500">Данные отсутствуют. Запустите parse_sber_data.py для получения данных.</p>`;
+            }
         });
     </script>
 </body>
