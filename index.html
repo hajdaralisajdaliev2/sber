@@ -81,25 +81,153 @@
 
         let dividendData = [];
 
-        // Загрузка данных из JSON
-        async function loadData() {
+        // Функция для получения дивидендов через ISS API
+        async function fetchDividendsISS(ticker) {
+            const url = `https://iss.moex.com/iss/securities/${ticker}/dividends.json?from=2015-01-01`;
             try {
-                const response = await fetch('data.json');
-                if (!response.ok) {
-                    throw new Error('Не удалось загрузить data.json');
+                const response = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                });
+                if (!response.ok) throw new Error('Ошибка ISS API');
+                const data = await response.json();
+                const dividends = [];
+                for (const row of data['dividends']['data']) {
+                    const date = row[2];  // registryclosedate
+                    const amount = row[4];  // value
+                    if (date && amount) {
+                        dividends.push({ date, dividend: parseFloat(amount), ticker });
+                    }
                 }
-                return await response.json();
+                return dividends;
             } catch (error) {
-                console.error('Ошибка загрузки данных:', error);
-                document.getElementById('results').innerHTML = `<p class="text-red-500">Ошибка: ${error.message}. Убедитесь, что data.json существует и страница открыта через сервер.</p>`;
+                console.error('Ошибка ISS:', error);
                 return [];
             }
+        }
+
+        // Резервная функция для получения дивидендов через Finam
+        async function fetchDividendsFinam(ticker) {
+            const url = `https://www.finam.ru/profile/moex-akcii/${ticker}/dividends/`;
+            try {
+                const response = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                    }
+                });
+                if (!response.ok) throw new Error('Ошибка Finam');
+                const text = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(text, 'text/html');
+                const table = doc.querySelector('table.table');
+                if (!table) return [];
+
+                const dividends = [];
+                const rows = table.querySelectorAll('tr');
+                for (let i = 1; i < rows.length; i++) {  // Пропускаем заголовок
+                    const cols = rows[i].querySelectorAll('td');
+                    if (cols.length >= 2) {
+                        const dateStr = cols[0].textContent.trim();
+                        const amount = parseFloat(cols[1].textContent.trim().replace(',', '.'));
+                        if (dateStr && !isNaN(amount)) {
+                            const [day, month, year] = dateStr.split('.');
+                            const date = `${year}-${month}-${day}`;
+                            dividends.push({ date, dividend: amount, ticker });
+                        }
+                    }
+                }
+                return dividends;
+            } catch (error) {
+                console.error('Ошибка Finam:', error);
+                return [];
+            }
+        }
+
+        // Функция для получения цен и расчета гэпа через ISS API
+        async function calculateGaps(ticker, dividends) {
+            for (const div of dividends) {
+                const date = new Date(div.date);
+                const startDate = new Date(date);
+                startDate.setDate(date.getDate() - 2);
+                const endDate = new Date(date);
+                endDate.setDate(date.getDate() + 2);
+
+                const start = startDate.toISOString().split('T')[0];
+                const end = endDate.toISOString().split('T')[0];
+                const url = `https://iss.moex.com/iss/engines/stock/markets/shares/securities/${ticker}/candles.json?interval=24&from=${start}&till=${end}`;
+
+                try {
+                    const response = await fetch(url, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+                        }
+                    });
+                    if (!response.ok) throw new Error('Ошибка ISS API');
+                    const data = await response.json();
+                    const candles = data['candles']['data'];
+                    if (candles.length < 2) {
+                        div.yield = 0;
+                        div.gap = 0;
+                        continue;
+                    }
+
+                    let pricePre = null;
+                    let pricePost = null;
+                    for (const candle of candles) {
+                        const candleDate = candle[0].split(' ')[0];
+                        if (candleDate < div.date) {
+                            pricePre = candle[4];  // Close до отсечки
+                        } else if (candleDate >= div.date) {
+                            pricePost = candle[1];  // Open после отсечки
+                            break;
+                        }
+                    }
+
+                    if (pricePre && pricePost) {
+                        div.yield = (div.dividend / pricePre) * 100;
+                        div.gap = ((pricePre - pricePost) / pricePre) * 100;
+                    } else {
+                        div.yield = 0;
+                        div.gap = 0;
+                    }
+                } catch (error) {
+                    console.error(`Ошибка расчета гэпа для ${div.date}:`, error);
+                    div.yield = 0;
+                    div.gap = 0;
+                }
+            }
+            return dividends;
+        }
+
+        // Функция для анализа отчетов (заглушка)
+        function analyzeReports(dividends) {
+            const reportData = {
+                'SBER': {
+                    '2024-07-11': { profit_change: 18.0, status: 'Положительный' },
+                    '2023-05-11': { profit_change: 10.0, status: 'Положительный' },
+                    '2022-05-12': { profit_change: -20.0, status: 'Отрицательный' },
+                    '2021-05-06': { profit_change: 15.0, status: 'Положительный' },
+                    '2020-06-25': { profit_change: -10.0, status: 'Отрицательный' }
+                },
+                'LKOH': {
+                    '2024-06-14': { profit_change: 12.0, status: 'Положительный' },
+                    '2023-07-07': { profit_change: 8.0, status: 'Положительный' }
+                }
+            };
+
+            for (const div of dividends) {
+                const ticker = div.ticker;
+                const date = div.date;
+                div.report = reportData[ticker]?.[date]?.status || 'Неизвестно';
+            }
+            return dividends;
         }
 
         // Заполнение фильтра по годам
         function populateYearFilter(data) {
             const yearFilter = document.getElementById('yearFilter');
-            yearFilter.innerHTML = '<option value="">Все годы</option>'; // Очистка фильтра
+            yearFilter.innerHTML = '<option value="">Все годы</option>';
             const years = [...new Set(data.map(item => item.date.split('-')[0]))];
             years.forEach(year => {
                 const option = document.createElement('option');
@@ -111,12 +239,6 @@
 
         // Заполнение таблицы
         async function populateTable(filterYear = '') {
-            dividendData = await loadData();
-            if (dividendData.length === 0) {
-                document.getElementById('results').innerHTML = `<p class="text-red-500">Данные отсутствуют. Запустите parse_sber_data.py и убедитесь, что data.json создан.</p>`;
-                return;
-            }
-
             if (filterYear) {
                 dividendData = dividendData.filter(item => item.date.startsWith(filterYear));
             }
@@ -172,8 +294,28 @@
                 return;
             }
 
-            document.getElementById('results').innerHTML = `<p class="text-blue-500">Загрузка данных для ${ticker}... Запустите parse_sber_data.py с тикером ${ticker}.</p>`;
-            await new Promise(resolve => setTimeout(resolve, 2000)); // Даем время на запуск скрипта
+            document.getElementById('results').innerHTML = `<p class="text-blue-500">Загрузка данных для ${ticker}...</p>`;
+
+            // Попробуем ISS API
+            let dividends = await fetchDividendsISS(ticker);
+            if (!dividends.length) {
+                document.getElementById('results').innerHTML = `<p class="text-blue-500">ISS API недоступен, пробуем Finam...</p>`;
+                dividends = await fetchDividendsFinam(ticker);
+            }
+
+            if (!dividends.length) {
+                document.getElementById('results').innerHTML = `<p class="text-red-500">Не удалось загрузить данные для ${ticker}. Проверьте тикер и доступность API.</p>`;
+                return;
+            }
+
+            // Рассчитываем гэпы
+            dividendData = await calculateGaps(ticker, dividends);
+
+            // Анализируем отчеты
+            dividendData = analyzeReports(dividendData);
+
+            // Обновляем таблицу
+            populateYearFilter(dividendData);
             populateTable();
         });
 
@@ -235,17 +377,6 @@
                 <p>Анализ отчета: ${item.report}</p>
             `;
         }
-
-        // Инициализация
-        loadData().then(data => {
-            dividendData = data;
-            if (data.length > 0) {
-                populateYearFilter(data);
-                populateTable();
-            } else {
-                document.getElementById('results').innerHTML = `<p class="text-red-500">Данные отсутствуют. Запустите parse_sber_data.py для получения данных.</p>`;
-            }
-        });
     </script>
 </body>
 </html>
