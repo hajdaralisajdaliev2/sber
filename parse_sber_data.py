@@ -2,12 +2,13 @@ import requests
 import json
 from datetime import datetime, timedelta
 import logging
+from bs4 import BeautifulSoup
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Функция для получения дивидендов через ISS API
-def parse_dividends():
+def parse_dividends_iss():
     url = "https://iss.moex.com/iss/securities/SBER/dividends.json?from=2015-01-01"
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
     try:
@@ -15,7 +16,7 @@ def parse_dividends():
         response.raise_for_status()
         data = response.json()
     except requests.exceptions.RequestException as e:
-        logging.error(f"Ошибка при запросе дивидендов: {e}")
+        logging.error(f"Ошибка при запросе дивидендов через ISS: {e}")
         return []
 
     dividends = []
@@ -32,6 +33,45 @@ def parse_dividends():
                 logging.warning(f"Ошибка обработки строки дивидендов: {e}")
                 continue
     return dividends
+
+# Резервная функция для получения дивидендов через Finam
+def parse_dividends_finam():
+    url = "https://www.finam.ru/profile/moex-akcii/sberbank/dividends/"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Ошибка при запросе дивидендов через Finam: {e}")
+        return []
+
+    dividends = []
+    table = soup.find('table', class_='table')
+    if table:
+        rows = table.find_all('tr')[1:]  # Пропускаем заголовок
+        for row in rows:
+            cols = row.find_all('td')
+            if len(cols) >= 2:
+                date = cols[0].text.strip()  # Дата отсечки
+                amount = cols[1].text.strip().replace(',', '.')  # Дивиденд
+                try:
+                    date = datetime.strptime(date, '%d.%m.%Y').strftime('%Y-%m-%d')
+                    amount = float(amount)
+                    dividends.append({'date': date, 'dividend': amount})
+                    logging.info(f"Finam: Добавлено: дата {date}, дивиденд {amount}")
+                except Exception as e:
+                    logging.warning(f"Ошибка обработки строки дивидендов (Finam): {e}")
+                    continue
+    return dividends
+
+# Функция для получения дивидендов (попробует ISS, затем Finam)
+def parse_dividends():
+    dividends = parse_dividends_iss()
+    if dividends:
+        return dividends
+    logging.warning("ISS API недоступен, пробуем Finam...")
+    return parse_dividends_finam()
 
 # Функция для получения цен и расчета гэпа через ISS API
 def calculate_gaps(dividends):
@@ -102,7 +142,7 @@ def main():
     # Парсинг дивидендов
     dividends = parse_dividends()
     if not dividends:
-        logging.error("Не удалось получить дивиденды. Завершение.")
+        logging.error("Не удалось получить дивиденды ни через ISS, ни через Finam. Завершение.")
         return
     
     # Расчет гэпов
